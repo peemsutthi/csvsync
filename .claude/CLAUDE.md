@@ -34,7 +34,9 @@ Three modules with one rule: **network and filesystem logic stays out of
 - `downloader.py` — pure. `download()` takes every input as an argument and
   raises `DownloadError` with a `kind` field (`input`, `timeout`, `network`,
   `http`, `private`, `write`) so callers can report the actual failure. The
-  `session` argument is the seam tests inject a fake through. Each success
+  `session` argument is the seam tests inject a fake through. `sheet_id_from()`
+  accepts a pasted Sheet URL as well as a bare ID — people paste the address bar,
+  and the mangled fetch that followed got misreported as `private`. Each success
   writes twice: the live file, and an overwritten mirror at
   `<folder>/data/<name>.csv` (deliberately no history — that was the choice).
 - `config.py` — JSON settings + rotating log in `%APPDATA%\sheetsync` /
@@ -61,4 +63,11 @@ token set, not new widgets.
 - A non-public sheet answers **200 with an HTML sign-in page**; `downloader.py`
   checks the content type so it never writes HTML into a `.csv`.
 - PyInstaller cannot cross-compile. Windows `.exe` builds on Windows, macOS
-  `.app` on macOS, same source.
+  `.app` on macOS, same source. `.github/workflows/build.yml` does both on a `v*`
+  tag, which is the only way to get an `.exe` without a Windows machine.
+- The two platforms need **different PyInstaller flags**. macOS is onedir
+  (`--windowed`): `--onefile` with a `.app` is deprecated, "clashes with macOS's
+  security", and becomes an error in PyInstaller 7 — and it zips to the same 13 MB
+  anyway. Windows is `--onefile --windowed`, since it has no bundle format.
+- Builds are unsigned on purpose, so both OSes block the first launch. Not a broken
+  build — see the README. Signing is ~$99/yr Apple plus a Windows cert.

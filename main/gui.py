@@ -104,7 +104,7 @@ class App:
                                              pady=(2, 0))
 
         self._section("source")
-        self._field("Sheet ID", self.sheet_id)
+        self._field("Sheet link or ID", self.sheet_id)
         self._field("Tab name", self.tab)
 
         self._section("output")

@@ -3,6 +3,7 @@
 Pure logic: no Tk, no globals, no module-level side effects. Everything the
 download needs arrives as an argument, which is what makes this testable.
 """
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -13,6 +14,7 @@ GVIZ_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:cs
 DEFAULT_FILENAME = "downloaded_google_sheet"
 DEFAULT_TIMEOUT = 30
 MIRROR_DIRNAME = "data"
+SHEET_ID_RE = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]+)")
 
 
 class DownloadError(Exception):
@@ -24,6 +26,19 @@ class DownloadError(Exception):
     def __init__(self, kind: str, message: str):
         super().__init__(message)
         self.kind = kind
+
+
+def sheet_id_from(text: str) -> str:
+    """Pull the ID out of a pasted Sheet URL; pass a bare ID through unchanged.
+
+    People paste the whole address bar, because that is the thing they have. The
+    ID went into the URL verbatim before, so the fetch came back as HTML and got
+    reported as "that sheet isn't public" — sending them off to change sharing
+    settings that were never the problem.
+    """
+    text = (text or "").strip()
+    found = SHEET_ID_RE.search(text)
+    return found.group(1) if found else text
 
 
 def sheet_url(sheet_id: str, tab: str) -> str:
@@ -46,7 +61,7 @@ def download(sheet_id: str, tab: str, folder: str = ".", filename: str = DEFAULT
     Raises DownloadError for every expected failure, tagged by kind so the
     caller can say what actually went wrong instead of "Error: <something>".
     """
-    sheet_id, tab = (sheet_id or "").strip(), (tab or "").strip()
+    sheet_id, tab = sheet_id_from(sheet_id), (tab or "").strip()
     if not sheet_id or not tab:
         raise DownloadError("input", "Enter both a Sheet ID and a tab name.")
 

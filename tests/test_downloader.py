@@ -7,7 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import requests
 
-from main.downloader import DownloadError, download, sheet_url, target_path
+from main.downloader import (DownloadError, download, sheet_id_from,
+                             sheet_url, target_path)
 
 
 class FakeResponse:
@@ -28,6 +29,28 @@ class FakeSession:
         if self.error:
             raise self.error
         return self.response
+
+
+def test_pasted_url_yields_the_bare_id():
+    """The address bar is what people actually copy, in each of its shapes."""
+    expected = "1AbC_dEf-GhIjK123"
+    for pasted in (
+        "https://docs.google.com/spreadsheets/d/1AbC_dEf-GhIjK123/edit#gid=0",
+        "https://docs.google.com/spreadsheets/d/1AbC_dEf-GhIjK123/edit?usp=sharing",
+        "https://docs.google.com/spreadsheets/d/1AbC_dEf-GhIjK123",
+        "  https://docs.google.com/spreadsheets/d/1AbC_dEf-GhIjK123/edit  ",
+    ):
+        assert sheet_id_from(pasted) == expected, pasted
+    assert sheet_id_from(expected) == expected          # bare ID passes through
+    assert sheet_id_from("") == ""                      # still caught as "input"
+
+
+def test_download_accepts_a_pasted_url():
+    session = FakeSession()
+    with tempfile.TemporaryDirectory() as folder:
+        download("https://docs.google.com/spreadsheets/d/abc123/edit#gid=0",
+                 "Sheet1", folder, "out", session=session)
+    assert "/spreadsheets/d/abc123/gviz" in session.calls[0][0]
 
 
 def test_sheet_name_is_url_encoded():
