@@ -51,7 +51,46 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { merge-multiple: true }
-      - run: gh release create "$GITHUB_REF_NAME" --generate-notes SheetSync-*
+      # Notes are written for whoever lands on the Releases page to download the
+      # app, not for developers reading a changelog. --generate-notes would give
+      # them commit subjects, which answers none of their questions.
+      - run: |
+          cat > notes.md <<'EOF'
+          Keeps one tab of a Google Sheet mirrored to a CSV file on your computer.
+
+          ### Which file do I download?
+
+          | Your computer | Download | Then |
+          |---|---|---|
+          | **Mac** (Apple Silicon) | `SheetSync-macos-arm64.zip` | Unzip, drag `SheetSync` to Applications |
+          | **Windows** | `SheetSync-windows-x64.exe` | Save anywhere, double-click |
+
+          Nothing to install — no Python, no setup. About 13 MB.
+
+          ### Your computer will warn you the first time
+
+          Both files are unsigned, so each system blocks them **once**. The file is
+          fine; this is just what unsigned means.
+
+          - **Mac** — *"SheetSync is damaged and can't be opened"* is what unsigned
+            looks like, not a broken download. **Right-click** the app → **Open** →
+            **Open**.
+          - **Windows** — *"Windows protected your PC"* → **More info** → **Run anyway**.
+
+          ### Setting it up
+
+          Your sheet has to be link-shared, because SheetSync never asks you to sign in:
+          **Share** → **Anyone with the link** → **Viewer**.
+
+          Then paste the sheet's web address into **Sheet link or ID**, type the tab
+          name, choose a folder, and press **Start**.
+
+          Full instructions: https://github.com/${{ github.repository }}#using-it
+          EOF
+          gh release create "$GITHUB_REF_NAME" \
+            --title "SheetSync $GITHUB_REF_NAME" \
+            --notes-file notes.md \
+            SheetSync-*
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
