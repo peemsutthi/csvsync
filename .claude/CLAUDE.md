@@ -39,8 +39,8 @@ Three modules with one rule: **network and filesystem logic stays out of
   and the mangled fetch that followed got misreported as `private`. Each success
   writes twice: the live file, and an overwritten mirror at
   `<folder>/data/<name>.csv` (deliberately no history — that was the choice).
-- `config.py` — JSON settings + rotating log in `%APPDATA%\sheetsync` /
-  `~/.config/sheetsync`. Deliberately not "next to the app": a PyInstaller
+- `config.py` — JSON settings + rotating log in `%APPDATA%\csvsync` /
+  `~/.config/csvsync`. Deliberately not "next to the app": a PyInstaller
   one-file build unpacks to a temp dir that is deleted on exit.
 - `gui.py` — design tokens, widgets, wiring. The worker thread posts to a
   `queue.Queue` that `_drain()` polls on the Tk thread; **never touch a widget
@@ -55,6 +55,40 @@ native chrome. All of it lives in the token block at the top of `gui.py`
 `clam` on purpose: `aqua` and `vista` draw natively and ignore colour options.
 Consequence: the app does not follow OS dark mode. Adding it means a second
 token set, not new widgets.
+
+Two type roles, and the split is a rule rather than a preference: **prose is
+sans, anything the user types is mono.** A Sheet ID, tab name, filename and
+path are literals that have to match something exactly. `_pick()` resolves
+Avenir Next / Segoe UI and Menlo / Consolas with fallbacks — no font is
+bundled, because Tk has no font-loading API and registering one is per-platform
+`ctypes`. Section markers (`SOURCE`, `OUTPUT`) are plain `text.upper()` in
+`Sect.TLabel`, mono at a small size and muted color — no letterspacing (Tk has
+no tracking option, and a hand-rolled space-join read heavier than intended).
+
+The window has two states. Idle shows the setup pane; Start calls `collapse()`,
+which `grid_remove()`s it behind a one-line summary of what the run is actually
+using. The fields stay enabled — Start is disabled while running, so the only
+way to apply an edit is Stop then Start, which re-reads them anyway.
+`_refit()` rewrites the **height only**; `geometry("")` would also reset a
+width the user dragged.
+
+`Check.Toolbutton` is the Repeat toggle: a real `ttk.Checkbutton` (Space
+toggles it) styled on clam's `Toolbutton` layout, which has no indicator
+element — clam's own `TCheckbutton` indicator draws an **✗** for "checked",
+which reads as "no" on a control that means "yes", and the classic
+`tk.Checkbutton` draws no mark at all on macOS. `_sync_repeat_mark()` draws
+`☑`/`☐` itself as the widget's text, wired to the `command` callback so it
+stays in sync with clicks.
+
+The signature is `_rule`: the hairline between the tape and the footer is also
+the countdown, filling in `ACCENT` as the interval elapses. It rides `_drain`'s
+existing 100 ms timer via `_tick()` — there is no second `after` loop, and the
+deadline arrives from the worker as a `("wait", (deadline, interval))` message
+so it tracks the settings the run actually started with.
+
+`self.tape` is a read-only `tk.Text`, not a label: it is the only place results
+appear, and one footer label used to clip every path and every long error.
+Capped at `TAPE_LINES`.
 
 ## Constraints worth not relearning
 

@@ -19,11 +19,11 @@ def config_dir() -> Path:
     """Per-user data dir. Not "next to the app": a PyInstaller one-file build
     unpacks to a temp dir that is deleted on exit, so there is no such place."""
     base = environ.get("APPDATA") or (Path.home() / ".config")
-    return Path(base) / "sheetsync"
+    return Path(base) / "csvsync"
 
 
 SETTINGS_PATH = config_dir() / "settings.json"
-LOG_PATH = config_dir() / "sheetsync.log"
+LOG_PATH = config_dir() / "csvsync.log"
 
 
 def load() -> dict:
@@ -43,12 +43,12 @@ def save(settings: dict) -> None:
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except OSError:
-        logging.getLogger("sheetsync").warning("could not write %s", SETTINGS_PATH)
+        logging.getLogger("csvsync").warning("could not write %s", SETTINGS_PATH)
 
 
 def get_logger() -> logging.Logger:
     """Rotating file log so unattended loop runs leave a trace."""
-    log = logging.getLogger("sheetsync")
+    log = logging.getLogger("csvsync")
     if not log.handlers:
         log.setLevel(logging.INFO)
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)

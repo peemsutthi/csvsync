@@ -1,6 +1,6 @@
 name: build
 
-# Tag a version to ship it:  git tag v1.0 && git push --tags
+# Tag a version to ship it: git tag v1.0 && git push --tags
 on:
   push:
     tags: ["v*"]
@@ -12,30 +12,31 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            artifact: SheetSync-macos-arm64.zip
+            artifact: csvSync-macos-arm64.zip
           - os: windows-latest
-            artifact: SheetSync-windows-x64.exe
+            artifact: csvSync-windows-x64.exe
     runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - run: pip install -r requirements.txt pyinstaller
 
-      # onedir, not onefile: PyInstaller deprecated --onefile with .app bundles
-      # ("clashes with macOS's security"), and it becomes an error in v7.
-      # A .app is already one double-clickable icon, and it zips to the same size.
+      # macOS: build a .app bundle and zip it.
       - if: runner.os == 'macOS'
         run: |
-          pyinstaller --windowed --name SheetSync --paths . --noconfirm main/__main__.py
-          ditto -c -k --keepParent dist/SheetSync.app "${{ matrix.artifact }}"
+          pyinstaller --windowed --name csvSync --paths . --noconfirm main/__main__.py
+          ditto -c -k --keepParent dist/csvSync.app "${{ matrix.artifact }}"
 
-      # Windows has no bundle format, so onefile is what makes it one icon.
+      # Windows: build a single executable.
       - if: runner.os == 'Windows'
         run: |
-          pyinstaller --onefile --windowed --name SheetSync --paths . --noconfirm main/__main__.py
-          Move-Item dist/SheetSync.exe "${{ matrix.artifact }}"
+          pyinstaller --onefile --windowed --name csvSync --paths . --noconfirm main/__main__.py
+          Move-Item dist/csvSync.exe "${{ matrix.artifact }}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -48,49 +49,16 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - uses: actions/download-artifact@v4
-        with: { merge-multiple: true }
-      # Notes are written for whoever lands on the Releases page to download the
-      # app, not for developers reading a changelog. --generate-notes would give
-      # them commit subjects, which answers none of their questions.
+        with:
+          merge-multiple: true
+
       - run: |
-          cat > notes.md <<'EOF'
-          Keeps one tab of a Google Sheet mirrored to a CSV file on your computer.
-
-          ### Which file do I download?
-
-          | Your computer | Download | Then |
-          |---|---|---|
-          | **Mac** (Apple Silicon) | `SheetSync-macos-arm64.zip` | Unzip, drag `SheetSync` to Applications |
-          | **Windows** | `SheetSync-windows-x64.exe` | Save anywhere, double-click |
-
-          Nothing to install — no Python, no setup. About 13 MB.
-
-          ### Your computer will warn you the first time
-
-          Both files are unsigned, so each system blocks them **once**. The file is
-          fine; this is just what unsigned means.
-
-          - **Mac** — *"SheetSync is damaged and can't be opened"* is what unsigned
-            looks like, not a broken download. **Right-click** the app → **Open** →
-            **Open**.
-          - **Windows** — *"Windows protected your PC"* → **More info** → **Run anyway**.
-
-          ### Setting it up
-
-          Your sheet has to be link-shared, because SheetSync never asks you to sign in:
-          **Share** → **Anyone with the link** → **Viewer**.
-
-          Then paste the sheet's web address into **Sheet link or ID**, type the tab
-          name, choose a folder, and press **Start**.
-
-          Full instructions: https://github.com/${{ github.repository }}#using-it
-          EOF
           gh release create "$GITHUB_REF_NAME" \
-            --title "SheetSync $GITHUB_REF_NAME" \
-            --notes-file notes.md \
-            SheetSync-*
+            --title "csvSync $GITHUB_REF_NAME" \
+            csvSync-*
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

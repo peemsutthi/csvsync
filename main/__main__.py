@@ -1,4 +1,4 @@
-"""Entry point: `python -m sheetsync`, and the PyInstaller build target."""
+"""Entry point: `python -m main`, and the PyInstaller build target."""
 from main.gui import main
 
 main()
