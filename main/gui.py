@@ -8,56 +8,94 @@ from pathlib import Path
 from tkinter import filedialog, font, ttk
 
 from . import config
-from .downloader import DownloadError, download
+from .downloader import DownloadError, download, list_tabs
 
 # --- design tokens: the entire visual identity -------------------------------
-BG = "#FFFFFF"      
+BG = "#FFFFFF"
 FIELD = "#FFFFFF"
 INK = "#1F1D1A"     # sumi
-MUTED = "#8C8880"
-LINE = "#DFDBD2"    # hairline
+MUTED = "#6E6A63"   # 5.38:1 on BG; text this size needs 4.5:1
+EDGE = "#8F8A81"    # control borders, 3.43:1: fields are white on white, so this is their only edge
+LINE = "#DFDBD2"    # decorative hairline: countdown track, disabled buttons
 ACCENT = "#2E4A62"  # ai, muted indigo
 OK = "#5E7A5A"
 ERR = "#A85A4A"
 PAD, GAP = 28, 18
 
 STATUS_COLOR = {"idle": MUTED, "busy": ACCENT, "ok": OK, "error": ERR}
-STATUS_WORD = {"idle": "idle", "busy": "live", "ok": "live", "error": "live"}
+STATUS_WORD = {"idle": "idle", "busy": "syncing…", "ok": "saved", "error": "failed"}
 TAPE_LINES = 500    # a week-long loop must not grow the buffer without bound
 TAPE_SHORT, TAPE_TALL = 3, 10   # rows before Start, and once running
 
 
-def _pick(families, *names, default):
-    return next((n for n in names if n in families), default)
+def _pick(*names):
+    """First family Tk really renders. Not a font.families() lookup: macOS hides
+    its system fonts (SF Pro, SF Mono) behind dot-names that list doesn't show."""
+    return next((n for n in names if font.Font(family=n).actual("family") == n), names[-1])
 
 
 def apply_theme(root):
     """clam honours colours; aqua and vista draw natively and ignore them.
 
-    Two type roles. Prose — labels, buttons, the state word — is set in a
-    humanist sans. Everything the user *types* is set in mono, because a Sheet
-    ID, a tab name, a filename and a path are all literals that have to match
-    something exactly; a proportional face was always a small lie about them.
+    Two type roles, both from the OS's current system fonts so nothing is
+    bundled: SF Pro / SF Mono on macOS, Segoe UI Variable / Cascadia Mono on
+    Windows 11, older faces as fallbacks. Prose — labels, buttons — is sans.
+    Everything the user *types* is set in mono, because a Sheet ID, a tab name,
+    a filename and a path are all literals that have to match something
+    exactly; a proportional face was always a small lie about them. The status
+    readout is mono too: it is a clock.
+
+    Sizes are negative, i.e. pixels. Points depend on `tk scaling`, which is
+    1.0 px/pt on older macOS Tk and 1.33 on Tk 9, so the same 9 pt marker came
+    out as 9 px (under the macOS 10 pt minimum) or 12 px depending on the build.
     """
-    fams = set(font.families())
-    ui = _pick(fams, "Avenir Next", "Segoe UI", "Noto Sans",
-               default=font.nametofont("TkDefaultFont").cget("family"))
-    mono = _pick(fams, "Menlo", "Consolas", "DejaVu Sans Mono",
-                 default=font.nametofont("TkFixedFont").cget("family"))
-    f_mark, f_sect = (mono, 24, "bold"), (mono, 9, "bold")
-    f_label, f_field, f_tape = (ui, 10), (mono, 11), (mono, 10)
+    ui = _pick(".AppleSystemUIFont", "Segoe UI Variable Text", "Segoe UI", "Avenir Next",
+               "Noto Sans", font.nametofont("TkDefaultFont").cget("family"))
+    mono = _pick(".AppleSystemUIFontMonospaced", "Cascadia Mono", "Menlo", "Consolas",
+                 "DejaVu Sans Mono", font.nametofont("TkFixedFont").cget("family"))
+    f_status, f_sect = (mono, -32, "bold"), (mono, -12, "bold")
+    f_label, f_field, f_tape = (ui, -13), (mono, -15), (mono, -13)
 
     root.configure(bg=BG)
     style = ttk.Style()
     style.theme_use("clam")
     style.configure(".", background=BG, foreground=INK, font=f_label, borderwidth=0)
-    style.configure("TEntry", fieldbackground=FIELD, bordercolor=LINE, lightcolor=LINE,
-                    darkcolor=LINE, borderwidth=1, relief="flat", padding=7,
-                    insertcolor=INK, foreground=INK)
-    style.map("TEntry", bordercolor=[("focus", ACCENT)], lightcolor=[("focus", ACCENT)],
-              darkcolor=[("focus", ACCENT)],
-              foreground=[("disabled", MUTED)], fieldbackground=[("disabled", BG)])
-    style.configure("Mark.TLabel", font=f_mark, foreground=INK)
+    # Fields: a square EDGE line at rest, MUTED under the pointer, a 2 px ACCENT
+    # ring on focus. Built from alt-theme parts because clam's field border skips
+    # its corner pixels (a fake rounding that reads as gaps), and a 2 px border
+    # leaves a hole at the inner corners. So the ring is two 1 px rectangles: the
+    # border, plus a focus ring that holds its pixel when idle so text never shifts.
+    style.element_create("Box.border", "from", "alt")
+    style.element_create("Ring.focus", "from", "alt")
+
+    def boxed(inner, kids):
+        return [("Box.border", {"sticky": "nswe", "children": [("Ring.focus", {
+            "sticky": "nswe", "children": [(inner, {"sticky": "nswe", "expand": "1",
+                                                   "children": kids})]})]})]
+    style.layout("TEntry", boxed("Entry.padding", [("Entry.textarea", {"sticky": "nswe"})]))
+    # The dropdown arrow is the menubutton's bare triangle; clam boxes its own in a
+    # bevelled button. Any click off the text area still opens the list.
+    style.layout("TCombobox", boxed("Combobox.padding", [
+        ("Menubutton.indicator", {"side": "right", "sticky": ""}),
+        ("Combobox.textarea", {"sticky": "nswe"})]))
+    for name in ("TEntry", "TCombobox"):
+        style.configure(name, background=FIELD, bordercolor=EDGE, relief="solid",
+                        borderwidth=1, padding=(9, 6), focuscolor=ACCENT, focusthickness=1,
+                        focussolid=1, insertcolor=INK, foreground=INK)
+        style.map(name, bordercolor=[("focus", ACCENT), ("hover", MUTED)],
+                  foreground=[("disabled", MUTED)])
+    style.configure("TCombobox", arrowsize=4, arrowcolor=MUTED, arrowpadding=(8, 0, 0, 0))
+    style.map("TCombobox", arrowcolor=[("focus", ACCENT), ("hover", INK)])
+    # The open list: a native menu on macOS Tk 9 (nothing to style), a Tk listbox
+    # elsewhere, themed through its frame style and the option db.
+    style.configure("ComboboxPopdownFrame", relief="solid", borderwidth=1, bordercolor=EDGE,
+                    lightcolor=EDGE, darkcolor=EDGE, background=FIELD)
+    for key, value in (("background", FIELD), ("foreground", INK), ("font", f_field),
+                       ("selectBackground", ACCENT), ("selectForeground", BG),
+                       ("activeStyle", "none"), ("borderWidth", 0), ("highlightThickness", 0),
+                       ("selectBorderWidth", 0)):
+        root.option_add("*TCombobox*Listbox." + key, value)
+    style.configure("Status.TLabel", font=f_status, foreground=INK)
     style.configure("Sect.TLabel", font=f_sect, foreground=MUTED)
     style.configure("Label.TLabel", font=f_label, foreground=MUTED)
     style.configure("Muted.TLabel", font=f_label, foreground=MUTED)
@@ -65,15 +103,18 @@ def apply_theme(root):
     # "Toolbutton" layout has no indicator element (only clam's TCheckbutton
     # layout does, and its indicator draws an X) — reused here flattened back
     # down to a plain label so the drawn ☑/☐ text is the only mark shown.
-    style.configure("Check.Toolbutton", font=(ui, 15), padding=(0, 2), relief="flat",
+    style.configure("Check.Toolbutton", font=(ui, -20), padding=(0, 2), relief="flat",
                     borderwidth=0, background=BG, foreground=INK, focuscolor=ACCENT)
     style.map("Check.Toolbutton", background=[("selected", BG), ("active", BG)],
               foreground=[("active", ACCENT)])
     style.configure("TButton", font=f_label, borderwidth=1, relief="solid", padding=(16, 8),
-                    background=BG, foreground=INK, bordercolor=LINE, focuscolor=ACCENT,
-                    lightcolor=LINE, darkcolor=LINE)
+                    background=BG, foreground=INK, bordercolor=EDGE, focuscolor=ACCENT,
+                    lightcolor=EDGE, darkcolor=EDGE)
+    # Disabled buttons keep the faint hairline so they recede next to live ones.
     style.map("TButton", background=[("active", "#EAE7E0")],
-              bordercolor=[("active", MUTED)], foreground=[("disabled", MUTED)])
+              bordercolor=[("disabled", LINE), ("active", MUTED)],
+              lightcolor=[("disabled", LINE)], darkcolor=[("disabled", LINE)],
+              foreground=[("disabled", MUTED)])
     style.configure("Primary.TButton", background=INK, foreground=BG, bordercolor=INK,
                     lightcolor=INK, darkcolor=INK, focuscolor=BG)
     style.map("Primary.TButton", background=[("active", ACCENT), ("disabled", BG)],
@@ -136,6 +177,7 @@ class App:
         self.messages = queue.Queue()   # worker -> UI; Tk is not thread-safe
         self._deadline = None           # monotonic time of the next fetch
         self._interval = 0
+        self._tabs_job = None           # pending debounced tab-list fetch
 
         settings = config.load()
         self.sheet_id = tk.StringVar(value=settings["sheet_id"])
@@ -146,6 +188,8 @@ class App:
         self.loop = tk.BooleanVar(value=settings["loop"])
 
         self._build()
+        self.sheet_id.trace_add("write", self._schedule_tabs)
+        self._fetch_tabs()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.bind("<Return>", lambda _event: self.start())
         self.root.after(100, self._drain)
@@ -173,15 +217,16 @@ class App:
         self.root.minsize(440, 300)
 
     def _header(self, parent):
+        """The status readout takes the top slot the wordmark used to hold: the
+        title bar already names the app, and "is the data fresh?" is the one
+        question this window answers from across a control room."""
         head = ttk.Frame(parent)
         head.grid(row=0, column=0, sticky="ew", pady=(0, GAP))
-        head.columnconfigure(1, weight=1)
-        ttk.Label(head, text="csvSync", style="Mark.TLabel").grid(row=0, column=0, sticky="w")
-        self.dot = tk.Canvas(head, width=7, height=7, bg=BG, highlightthickness=0)
-        self.dot.grid(row=0, column=2, padx=(0, 7))
-        self.dot_id = self.dot.create_rectangle(0, 0, 6, 6, fill=MUTED, outline="")
-        self.state_word = ttk.Label(head, text="idle", style="Label.TLabel")
-        self.state_word.grid(row=0, column=3, sticky="e")
+        self.dot = tk.Canvas(head, width=12, height=12, bg=BG, highlightthickness=0)
+        self.dot.grid(row=0, column=0, padx=(0, 12))
+        self.dot_id = self.dot.create_rectangle(2, 2, 11, 11, width=2)
+        self.state_word = ttk.Label(head, style="Status.TLabel")
+        self.state_word.grid(row=0, column=1, sticky="w")
 
     def _setup_pane(self, parent):
         self.setup = ttk.Frame(parent)
@@ -190,8 +235,10 @@ class App:
         self._frame, self._row, self._tails = self.setup, 0, []
 
         self._section("source")
-        self._field("Sheet link or ID", self.sheet_id)
-        self._field("Tab name", self.tab)
+        self.sheet_entry = self._field("Sheet link or ID", self.sheet_id)
+        self.tab_box = self._field("Tab name", self.tab, widget=ttk.Combobox)
+        self.tabs_hint = ttk.Label(self.tab_box.master, style="Muted.TLabel")
+        self.tabs_hint.grid(row=0, column=1, sticky="w", padx=(8, 0))
 
         self._section("output")
         self._field("File name", self.filename, suffix=".csv")
@@ -208,9 +255,9 @@ class App:
         repeat_label.grid(row=0, column=1, padx=(4, 10))
         repeat_label.bind("<Button-1>", lambda _e: self.repeat_chk.invoke())
         ttk.Label(row, text="every", style="Label.TLabel").grid(row=0, column=2, padx=(0, 8))
-        interval = ttk.Entry(row, width=4, justify="center",
-                             textvariable=self.interval, font=self.f_field)
-        interval.grid(row=0, column=3)
+        self.interval_entry = ttk.Entry(row, width=4, justify="center",
+                                        textvariable=self.interval, font=self.f_field)
+        self.interval_entry.grid(row=0, column=3)
         ttk.Label(row, text="seconds", style="Label.TLabel").grid(row=0, column=4, padx=(8, 0))
         self._align_tails()
 
@@ -261,7 +308,7 @@ class App:
         self.tape.tag_configure("ok", foreground=INK, lmargin2=indent)
         self.tape.tag_configure("error", foreground=ERR, lmargin2=indent)
         self.tape.tag_configure("empty", foreground=MUTED)
-        self.tape.insert("end", "press Start to fetch the sheet", "empty")
+        self.tape.insert("end", "Press Start to fetch the sheet.", "empty")
         self.tape.configure(state="disabled")
 
     def _rule(self, parent):
@@ -292,13 +339,13 @@ class App:
         ttk.Label(self._frame, text=text.upper(), style="Sect.TLabel").grid(
             row=self._next(), column=0, sticky="w", pady=(GAP, 6))
 
-    def _field(self, label, variable, suffix=None, button=None):
+    def _field(self, label, variable, suffix=None, button=None, widget=ttk.Entry):
         ttk.Label(self._frame, text=label, style="Label.TLabel").grid(
             row=self._next(), column=0, sticky="w")
         row = ttk.Frame(self._frame)
         row.grid(row=self._next(), column=0, sticky="ew", pady=(3, 10))
         row.columnconfigure(0, weight=1)
-        entry = ttk.Entry(row, textvariable=variable, font=self.f_field)
+        entry = widget(row, textvariable=variable, font=self.f_field)
         entry.grid(row=0, column=0, sticky="ew")
         if suffix:
             ttk.Label(row, text=suffix, style="Muted.TLabel").grid(
@@ -345,8 +392,29 @@ class App:
             self.folder.set(chosen)
             self.folder_entry.xview_moveto(1.0)   # show the tail, not the root
 
+    def _schedule_tabs(self, *_):
+        """Refetch the tab list once typing in the Sheet field pauses."""
+        self.tab_box.configure(values=[])   # the old sheet's tabs no longer apply
+        if self._tabs_job:
+            self.root.after_cancel(self._tabs_job)
+        self._tabs_job = self.root.after(600, self._fetch_tabs)
+
+    def _fetch_tabs(self):
+        self._tabs_job = None
+        link = self.sheet_id.get().strip()
+        self.tabs_hint.configure(text="…" if link else "")
+        if link:
+            threading.Thread(target=self._tabs_worker, args=(link,), daemon=True).start()
+
+    def _tabs_worker(self, link):
+        try:
+            tabs = list_tabs(link)
+        except Exception:       # any failure must still post, or the hint sticks at "…"
+            tabs = []
+        self.messages.put(("tabs", (link, tabs)))
+
     def settings_dict(self, interval):
-        return {"sheet_id": self.sheet_id.get().strip(), "tab": self.tab.get().strip(),
+        return {"sheet_id": self.sheet_id.get().strip(), "tab": self.tab.get(),
                 "filename": self.filename.get().strip(), "folder": self.folder.get().strip(),
                 "interval": interval, "loop": bool(self.loop.get())}
 
@@ -358,12 +426,14 @@ class App:
             if interval < 1:
                 raise ValueError
         except ValueError:
-            self._tape("error", "failed", "Repeat interval must be a whole number "
-                                          "of seconds, 1 or more.")
-            return
-        if not (self.sheet_id.get().strip() and self.tab.get().strip()):
-            self._tape("error", "failed", "Enter both a Sheet ID and a tab name.")
-            return
+            return self._refuse("Repeat interval must be a whole number of seconds, "
+                                "1 or more.", self.interval_entry)
+        if not self.sheet_id.get().strip():
+            return self._refuse("Paste the sheet link or ID.", self.sheet_entry)
+        if not self.tab.get().strip():
+            return self._refuse("Pick a tab.", self.tab_box)
+        if not self.folder.get().strip():
+            return self._refuse("Choose a folder to save into.", self.folder_entry)
 
         settings = self.settings_dict(interval)
         config.save(settings)
@@ -375,11 +445,16 @@ class App:
         self.worker = threading.Thread(target=self._run, args=(settings,), daemon=True)
         self.worker.start()
 
+    def _refuse(self, message, field):
+        """Say why Start did nothing, and put the cursor where the fix goes."""
+        self._tape("error", "failed", message)
+        field.focus_set()
+
     def stop(self):
         self.stop_event.set()   # ends the wait immediately; an in-flight request
         self._clear_countdown()  # is bounded by the download timeout
         self.stop_button.state(["disabled"])
-        self.state_word.configure(text="stopping")
+        self.state_word.configure(text="stopping…", foreground=MUTED)
 
     def close(self):
         self.stop_event.set()
@@ -394,24 +469,29 @@ class App:
 
     # --- worker thread: posts to the queue, never touches a widget -----------
     def _run(self, settings):
-        while True:
-            try:
-                dest = download(settings["sheet_id"], settings["tab"],
-                                settings["folder"], settings["filename"])
-                self.log.info("saved %s", dest)
-                self.messages.put(("ok", dest.name))
-            except DownloadError as exc:
-                self.log.error("%s: %s", exc.kind, exc)
-                self.messages.put(("error", str(exc)))
-            # Check the event before announcing a wait, or stopping mid-download
-            # flashes a countdown that is already cancelled.
-            if not settings["loop"] or self.stop_event.is_set():
-                break
-            self.messages.put(("wait", (time.monotonic() + settings["interval"],
-                                        settings["interval"])))
-            if self.stop_event.wait(settings["interval"]):
-                break
-        self.messages.put(("done", None))
+        try:
+            while True:
+                try:
+                    dest = download(settings["sheet_id"], settings["tab"],
+                                    settings["folder"], settings["filename"])
+                    self.log.info("saved %s", dest)
+                    self.messages.put(("ok", dest.name))
+                except DownloadError as exc:
+                    self.log.error("%s: %s", exc.kind, exc)
+                    self.messages.put(("error", str(exc)))
+                except Exception as exc:    # e.g. folder "~Desktop"; fails this pass, not the run
+                    self.log.exception("unexpected error")
+                    self.messages.put(("error", "Unexpected error: {}".format(exc)))
+                # Check the event before announcing a wait, or stopping mid-download
+                # flashes a countdown that is already cancelled.
+                if not settings["loop"] or self.stop_event.is_set():
+                    break
+                self.messages.put(("wait", (time.monotonic() + settings["interval"],
+                                            settings["interval"])))
+                if self.stop_event.wait(settings["interval"]):
+                    break
+        finally:
+            self.messages.put(("done", None))
 
     def _drain(self):
         try:
@@ -419,6 +499,8 @@ class App:
                 state, text = self.messages.get_nowait()
                 if state == "wait":
                     self._deadline, self._interval = text
+                elif state == "tabs":
+                    self._show_tabs(*text)
                 elif state == "done":
                     self.start_button.state(["!disabled"])
                     self.stop_button.state(["disabled"])
@@ -426,23 +508,42 @@ class App:
                     self._state("idle")
                     self.expand()
                 else:
-                    self._state(state)
-                    self._tape(state, "failed" if state == "error" else "saved", text)
+                    now = datetime.now()
+                    self._state(state, now)
+                    self._tape(state, STATUS_WORD[state], text, now)
         except queue.Empty:
             pass
         self._tick()
         self.root.after(100, self._drain)
 
     # --- display -------------------------------------------------------------
-    def _state(self, state):
-        self.state_word.configure(text=STATUS_WORD[state])
-        self.dot.itemconfigure(self.dot_id, fill=STATUS_COLOR[state])
+    def _show_tabs(self, link, tabs):
+        if link != self.sheet_id.get().strip():
+            return      # an answer for a link that has since been edited
+        self.tab_box.configure(values=tabs)
+        self.tabs_hint.configure(text="{} tab{}".format(len(tabs), "" if len(tabs) == 1 else "s")
+                                 if tabs else "check link")
+        # Only fill an empty field: replacing a saved name that has gone missing
+        # would quietly sync a tab nobody picked.
+        if tabs and not self.tab.get().strip():
+            self.tab.set(tabs[0])
 
-    def _tape(self, kind, verb, detail):
+    def _state(self, state, when=None):
+        """The word carries the state, so it never rests on colour alone; a
+        failed run also gets a hollow mark, because a solid red light reads as
+        "on air" in a control room."""
+        color = STATUS_COLOR[state]
+        self.state_word.configure(
+            text=STATUS_WORD[state] + (when.strftime(" %H:%M:%S") if when else ""),
+            foreground={"idle": MUTED, "error": ERR}.get(state, INK))
+        self.dot.itemconfigure(self.dot_id, outline=color,
+                               fill=BG if state == "error" else color)
+
+    def _tape(self, kind, verb, detail, when=None):
         self.tape.configure(state="normal")
         if self.tape.tag_ranges("empty"):
             self.tape.delete("1.0", "end")
-        row = tape_line(datetime.now(), verb, detail)
+        row = tape_line(when or datetime.now(), verb, detail)
         self.tape.insert("end", row[:10], "time")
         self.tape.insert("end", row[10:], "error" if kind == "error" else "ok")
         excess = int(self.tape.index("end-1c").split(".")[0]) - TAPE_LINES

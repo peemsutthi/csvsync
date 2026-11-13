@@ -44,26 +44,48 @@ Three modules with one rule: **network and filesystem logic stays out of
   one-file build unpacks to a temp dir that is deleted on exit.
 - `gui.py` — design tokens, widgets, wiring. The worker thread posts to a
   `queue.Queue` that `_drain()` polls on the Tk thread; **never touch a widget
-  from the worker**. Stop is a `threading.Event` whose `wait(interval)` doubles
-  as the loop sleep, so stopping is immediate.
+  from the worker**. `_run` posts `done` in a `finally`: without it, any
+  non-`DownloadError` (folder `~Desktop`) left Start disabled for good.
+  Tab name is a `ttk.Combobox`: editing the Sheet field schedules (600 ms
+  debounce) a background `list_tabs()` whose answer `_show_tabs()` drops if
+  the link changed meanwhile, and it only fills an **empty** tab field — never
+  swaps a saved name that went missing, which would sync an unpicked tab. Stop
+  is a `threading.Event` whose `wait(interval)` doubles as the loop sleep, so
+  stopping is immediate.
 
 ### Visual style
 
 Restrained, quiet, generous whitespace — a fixed paper palette rather than
 native chrome. All of it lives in the token block at the top of `gui.py`
-(`BG`/`INK`/`LINE`/`ACCENT`, `PAD`, `GAP`) plus `apply_theme()`. The theme is
+(`BG`/`INK`/`MUTED`/`EDGE`/`LINE`/`ACCENT`, `PAD`, `GAP`) plus `apply_theme()`.
+Contrast floors are measured, not eyeballed: `MUTED` text 5.38:1 (needs 4.5),
+`EDGE` control borders 3.43:1 (fields are white on white, so the border is
+their only edge); `LINE` is decorative only (countdown track, disabled
+buttons, which should recede). The theme is
 `clam` on purpose: `aqua` and `vista` draw natively and ignore colour options.
 Consequence: the app does not follow OS dark mode. Adding it means a second
 token set, not new widgets.
 
 Two type roles, and the split is a rule rather than a preference: **prose is
 sans, anything the user types is mono.** A Sheet ID, tab name, filename and
-path are literals that have to match something exactly. `_pick()` resolves
-Avenir Next / Segoe UI and Menlo / Consolas with fallbacks — no font is
-bundled, because Tk has no font-loading API and registering one is per-platform
-`ctypes`. Section markers (`SOURCE`, `OUTPUT`) are plain `text.upper()` in
+path are literals that have to match something exactly. Both roles use the
+OS's current system fonts: SF Pro / SF Mono on macOS (reachable only as the
+dot-names `.AppleSystemUIFont` / `.AppleSystemUIFontMonospaced`, which
+`font.families()` doesn't list — so `_pick()` keeps the first name Tk actually
+*resolves*), Segoe UI Variable / Cascadia Mono on Windows 11, then Avenir Next /
+Segoe UI and Menlo / Consolas as fallbacks. No font is bundled, because Tk has
+no font-loading API and registering one is per-platform `ctypes`. Font sizes are **negative = pixels**: points go through
+`tk scaling`, which is 1.0 px/pt on older macOS Tk and 1.33 on Tk 9, so a
+point size rendered 25% smaller depending on the build. Section markers
+(`SOURCE`, `OUTPUT`) are plain `text.upper()` in
 `Sect.TLabel`, mono at a small size and muted color — no letterspacing (Tk has
 no tracking option, and a hand-rolled space-join read heavier than intended).
+
+The top slot is the **status readout**, not a wordmark (the title bar already
+names the app): mono bold 32 px, `idle` / `syncing…` / `saved HH:MM:SS` /
+`failed HH:MM:SS`, so state never rests on colour alone. Beside it a square
+tally mark; failed draws it **hollow**, because a solid red light reads as "on
+air" in a control room. The readout and the tape row share one timestamp.
 
 The window has two states. Idle shows the setup pane; Start calls `collapse()`,
 which `grid_remove()`s it behind a one-line summary of what the run is actually
@@ -71,6 +93,17 @@ using. The fields stay enabled — Start is disabled while running, so the only
 way to apply an edit is Stop then Start, which re-reads them anyway.
 `_refit()` rewrites the **height only**; `geometry("")` would also reset a
 width the user dragged.
+
+Text fields and the tab dropdown share one look: a square `EDGE` line, `MUTED`
+under the pointer, a 2 px `ACCENT` ring on focus. Both use a custom layout of
+**alt-theme** parts (`Box.border` + `Ring.focus`), not clam's field: clam's
+border skips its corner pixels (a fake rounding that reads as gaps at the
+corners), and a 2 px border leaves a hole at the inner corners, so focus is two
+1 px rectangles instead. The idle focus ring still holds its pixel, so text
+never shifts. The dropdown's arrow is clam's `Menubutton.indicator`, a bare
+triangle; clam's own combobox arrow is boxed in a bevelled button.
+On macOS Tk 9 the open list is a **native menu**, so the listbox option-db
+styling only reaches Windows and older Tk.
 
 `Check.Toolbutton` is the Repeat toggle: a real `ttk.Checkbutton` (Space
 toggles it) styled on clam's `Toolbutton` layout, which has no indicator
@@ -96,6 +129,10 @@ Capped at `TAPE_LINES`.
   sheets shared "Anyone with the link can view". OAuth is out of scope.
 - A non-public sheet answers **200 with an HTML sign-in page**; `downloader.py`
   checks the content type so it never writes HTML into a `.csv`.
+- gviz answers an **unknown tab name with the first tab** (200, valid CSV, no
+  error). `download()` checks the name against the tab list on the public
+  `htmlview` page. That page is undocumented: if Google changes it, every run
+  fails with "No tab named …" — loud, never silently wrong.
 - PyInstaller cannot cross-compile. Windows `.exe` builds on Windows, macOS
   `.app` on macOS, same source. `.github/workflows/build.yml` does both on a `v*`
   tag, which is the only way to get an `.exe` without a Windows machine.

@@ -7,8 +7,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import requests
 
-from main.downloader import (DownloadError, download, sheet_id_from,
-                             sheet_url, target_path)
+from main.downloader import (DownloadError, download, list_tabs, sheet_id_from,
+                             sheet_url, tab_names, target_path)
+
+# What the public htmlview page holds for a sheet with one tab, "Sheet1".
+TABS_PAGE = 'items.push({name: "Sheet1", pageUrl: "x", gid: "0",initialSheet: ("0" == gid)});'
 
 
 class FakeResponse:
@@ -16,18 +19,22 @@ class FakeResponse:
         self.status_code = status_code
         self.content = content
         self.headers = {"content-type": content_type}
+        self.text = content.decode("utf-8")
 
 
 class FakeSession:
     """Stands in for `requests`; records the call or raises what it was given."""
 
-    def __init__(self, response=None, error=None):
+    def __init__(self, response=None, error=None, tabs_page=TABS_PAGE):
         self.response, self.error, self.calls = response or FakeResponse(), error, []
+        self.tabs_page = tabs_page
 
     def get(self, url, timeout=None):
         self.calls.append((url, timeout))
         if self.error:
             raise self.error
+        if url.endswith("/htmlview"):
+            return FakeResponse(content=self.tabs_page.encode(), content_type="text/html")
         return self.response
 
 
@@ -120,6 +127,48 @@ def test_error_kinds_are_distinguished():
                 raise AssertionError("expected DownloadError " + expected)
             except DownloadError as exc:
                 assert exc.kind == expected, (exc.kind, expected)
+
+
+def test_unknown_tab_is_refused_and_nothing_written():
+    """gviz answers a mistyped tab with the first tab's data; that must not land."""
+    with tempfile.TemporaryDirectory() as folder:
+        try:
+            download("abc", "sheet1", folder, "out", session=FakeSession())
+            raise AssertionError("expected DownloadError")
+        except DownloadError as exc:
+            assert exc.kind == "input" and "Sheet1" in str(exc), str(exc)
+        assert not (Path(folder) / "out.csv").exists()
+
+
+def test_tab_with_trailing_space_matches_exactly():
+    """The dropdown offers the real name; stripping it made the tab unsyncable."""
+    session = FakeSession(tabs_page='items.push({name: "Data ", gid: "0"});')
+    with tempfile.TemporaryDirectory() as folder:
+        download("abc", "Data ", folder, "out", session=session)
+    assert "sheet=Data%20" in session.calls[0][0]
+
+
+def test_server_side_http_error_does_not_blame_the_input():
+    for status, blames_input in ((429, False), (503, False), (404, True)):
+        try:
+            download("abc", "Sheet1", session=FakeSession(response=FakeResponse(status_code=status)))
+            raise AssertionError("expected DownloadError")
+        except DownloadError as exc:
+            assert exc.kind == "http" and ("Check the Sheet ID" in str(exc)) == blames_input, str(exc)
+
+
+def test_tab_names_are_unescaped():
+    page = "".join('items.push({name: "%s", gid: "%d"});' % (raw, i) for i, raw in enumerate(
+        [r"Q3 \x26 Q4", r"a\/b", r'say \"hi\"', "ยอดขาย", r"\u0e22\u0e2d\u0e14"]))
+    assert tab_names(page) == ["Q3 & Q4", "a/b", 'say "hi"', "ยอดขาย", "ยอด"], tab_names(page)
+    assert tab_names("<html>sign in</html>") == []
+
+
+def test_list_tabs_reads_the_pasted_links_sheet():
+    session = FakeSession()
+    assert list_tabs("https://docs.google.com/spreadsheets/d/abc/edit#gid=0",
+                     session=session) == ["Sheet1"]
+    assert session.calls[0][0].endswith("/d/abc/htmlview"), session.calls
 
 
 def test_unwritable_destination_is_a_write_error():

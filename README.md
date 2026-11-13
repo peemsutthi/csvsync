@@ -22,24 +22,24 @@ Both downloads are unsigned, so each operating system blocks them **once**. You 
 
 ## Using it
 
-**Share the sheet to Anyone with the link can view and edit**
+**Share the sheet to Anyone with the link can view**
 
 > In your sheet: **Share** → under *General access* pick **Anyone with the link**
-> → leave the role as **Editor** → **Done**.
+> → set the role to **Viewer** → **Done**. csvSync only reads the sheet, so it never needs Editor.
 
 Then open csvSync and fill in four things:
 
 | Field | What to put |
 |---|---|
 | **Sheet link or ID** | Copy your sheet's web address and paste the link or just sheet ID |
-| **Tab name** | The name on the tab at the bottom of your sheet — often `Sheet1` |
+| **Tab name** | Pick it from the list — it fills in a moment after you paste the link |
 | **File name** | What to call the CSV, e.g. `test` |
-| **Folder** | **Choose…** where it should be saved on the computer|
+| **Folder** | **Choose…** where it should be saved on the computer (required) |
 
 Press **Start**.
 
-To keep it updating by itself, tick **Repeat every _N_ seconds** before starting.
-It keeps going until you press **Stop** or close the window. Your settings are
+**Repeat every _N_ seconds** is on by default, so it keeps the CSV up to date by itself;
+untick it to fetch just once. It keeps going until you press **Stop** or close the window. Your settings are
 remembered for next time.
 
 You'll also find a second copy of the CSV in a `data` folder alongside it as a backup.

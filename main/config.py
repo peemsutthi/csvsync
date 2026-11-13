@@ -7,11 +7,11 @@ from pathlib import Path
 
 DEFAULTS = {
     "sheet_id": "",
-    "tab": "Sheet1",
+    "tab": "",          # filled with the first tab once the sheet link is read
     "filename": "downloaded_google_sheet",
     "folder": "",
     "interval": 30,
-    "loop": False,
+    "loop": True,
 }
 
 
