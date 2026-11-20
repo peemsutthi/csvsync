@@ -5,7 +5,7 @@ on a timer.
 
 ## Download
 
-download the file from the
+download the app from the
 **[Releases page](https://github.com/peemsutthi/csvsync/releases/latest)**:
 
 | OS | Download
@@ -17,48 +17,38 @@ download the file from the
 
 Both downloads are unsigned, so each operating system blocks them **once**. You only need to do this on first launch.
 
-- **Mac** — you need to enable the app by going to **Settings** → **Privacy & Security**
-- **Windows** — *"Windows protected your PC"* → **More info** → **Run anyway**.
+- **Mac:** you need to enable the app by going to **Settings** → **Privacy & Security**
+- **Windows:** *"Windows protected your PC"* → **More info** → **Run anyway**.
 
 ## Using it
 
-**Share the sheet to Anyone with the link can view**
+**Share the sheet so anyone with the link can view it**
 
 > In your sheet: **Share** → under *General access* pick **Anyone with the link**
-> → set the role to **Viewer** → **Done**. csvSync only reads the sheet, so it never needs Editor.
+> → set the role to **Viewer** → **Done**.
 
 Then open csvSync and fill in four things:
 
-| Field | What to put |
+| Field | Descriptions |
 |---|---|
-| **Sheet link or ID** | Copy your sheet's web address and paste the link or just sheet ID |
-| **Tab name** | Pick it from the list — it fills in a moment after you paste the link |
-| **File name** | What to call the CSV, e.g. `test` |
+| **Google Sheet link** | Copy your sheet's web address and paste it |
+| **Tab** | Pick it from the list after pasting the link |
+| **File name** | CSV file on your computer |
 | **Folder** | **Choose…** where it should be saved on the computer (required) |
 
-Press **Start**.
+Pick a **Schedule**: **3 s**, **5 s**, **10 s**, or **Once**, then press **Start Sync** (**Fetch Now** for Once).
 
-**Repeat every _N_ seconds** is on by default, so it keeps the CSV up to date by itself;
-untick it to fetch just once. It keeps going until you press **Stop** or close the window. Your settings are
-remembered for next time.
+It keeps going until you press **Stop** or close the window. If it fails, the app tells you why; fix it and press **Try Again**. The settings are remembered for next time.
 
 You'll also find a second copy of the CSV in a `data` folder alongside it as a backup.
 
 # For developers
 
-Refactor of `CSVExtractor.exe` — see `legacy/CSVExtractor_reconstructed.py` for the v1
-behavioural baseline.
-
 ## Run from source
+
+Needs Python 3.12+.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m main
-```
-
-## Test
-
-```bash
-.venv/bin/python tests/test_downloader.py   # standalone, no pytest needed
-.venv/bin/python -m pytest tests            # same file, if you install pytest
 ```

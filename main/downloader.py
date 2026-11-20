@@ -3,21 +3,33 @@
 Pure logic: no Tk, no globals, no module-level side effects. Everything the
 download needs arrives as an argument, which is what makes this testable.
 """
+import html
 import json
+import os
 import re
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import requests
 
-GVIZ_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab}"
+# Not gviz/tq?tqx=out:csv (v1): it gives each column one type, by majority, and
+# blanks every cell of another type, so "TBD" in a column of numbers comes out empty.
+EXPORT_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
 TABS_URL = "https://docs.google.com/spreadsheets/d/{sheet_id}/htmlview"
 DEFAULT_FILENAME = "downloaded_google_sheet"
 DEFAULT_TIMEOUT = 30
 MIRROR_DIRNAME = "data"
+PRIVATE_MESSAGE = "That sheet isn't public. Set sharing to 'Anyone with the link can view'."
 SHEET_ID_RE = re.compile(r"/spreadsheets/d/([A-Za-z0-9_-]+)")
-TAB_NAME_RE = re.compile(r'items\.push\(\{name: "((?:[^"\\]|\\.)*)"')
+# items.push({name: "2026", pageUrl: "…", gid: "569181446", …}): name, string fields, gid.
+TAB_RE = re.compile(r'items\.push\(\{name: "((?:[^"\\]|\\.)*)"(?:, \w+: "(?:[^"\\]|\\.)*")*, gid: "(\d+)"')
+TITLE_RE = re.compile(r"<title>(.*?)</title>", re.S | re.I)
+# " - Google Sheets", but localised by Google (seen live: " - Google ไดรฟ์"). Only the
+# last " - Google …" goes, so a title like "Ads - Google Ads export" survives.
+TITLE_SUFFIX_RE = re.compile(r"\s+-\s+Google(?:\s[^-]*)?$")
+SIGN_IN_HOST = "accounts.google.com"
 
 
 class DownloadError(Exception):
@@ -44,21 +56,22 @@ def sheet_id_from(text: str) -> str:
     return found.group(1) if found else text
 
 
-def sheet_url(sheet_id: str, tab: str) -> str:
-    """Build the gviz CSV export URL, percent-encoding both halves."""
-    return GVIZ_URL.format(sheet_id=quote(sheet_id, safe=""), tab=quote(tab, safe=""))
+def sheet_url(sheet_id: str, gid: str) -> str:
+    """Build the CSV export URL for one tab, by its gid."""
+    return EXPORT_URL.format(sheet_id=quote(sheet_id, safe=""), gid=quote(gid, safe=""))
 
 
-def tab_names(page: str) -> list:
-    """Tab names from the sheet's public htmlview page, where each sits in a JS
-    string literal such as `name: "Q3 \\x26 Q4"`."""
-    names = []
-    for raw in TAB_NAME_RE.findall(page):
+def tab_gids(page: str) -> dict:
+    """{tab name: gid}, in sheet order, from the sheet's public htmlview page,
+    where each name sits in a JS string literal such as `name: "Q3 \\x26 Q4"`."""
+    gids = {}
+    for raw, gid in TAB_RE.findall(page):
         try:
-            names.append(json.loads('"' + re.sub(r"\\x([0-9a-fA-F]{2})", r"\\u00\1", raw) + '"'))
+            name = json.loads('"' + re.sub(r"\\x([0-9a-fA-F]{2})", r"\\u00\1", raw) + '"')
         except ValueError:      # an escape JSON doesn't know: compare it as-is
-            names.append(raw)
-    return names
+            name = raw
+        gids[name] = gid
+    return gids
 
 
 def _get(session: Any, url: str, timeout: float):
@@ -76,11 +89,26 @@ def _get(session: Any, url: str, timeout: float):
     return response
 
 
-def list_tabs(sheet_id: str, timeout: float = DEFAULT_TIMEOUT, session: Any = requests) -> list:
-    """Tab names of a link-shared sheet, in sheet order. Empty if Google sent a
-    page without a tab list (e.g. the sign-in page of a private sheet)."""
-    url = TABS_URL.format(sheet_id=quote(sheet_id_from(sheet_id), safe=""))
-    return tab_names(_get(session, url, timeout).text)
+def sheet_info(link: str, timeout: float = DEFAULT_TIMEOUT, session: Any = requests) -> dict:
+    """{"title", "tabs", "gids"} of a link-shared sheet, from one htmlview request.
+
+    tabs are the names in sheet order, gids maps each to its gid; both are empty
+    if Google sent a page without a tab list.
+    A private sheet redirects to Google's sign-in page, which still answers 200.
+    """
+    url = TABS_URL.format(sheet_id=quote(sheet_id_from(link), safe=""))
+    response = _get(session, url, timeout)
+    if SIGN_IN_HOST in (getattr(response, "url", "") or ""):
+        raise DownloadError("private", PRIVATE_MESSAGE)
+    found = TITLE_RE.search(response.text)
+    title = html.unescape(found.group(1)).strip() if found else ""
+    gids = tab_gids(response.text)
+    return {"title": TITLE_SUFFIX_RE.sub("", title), "tabs": list(gids), "gids": gids}
+
+
+def list_tabs(sheet_id: str, timeout: float = DEFAULT_TIMEOUT, session: Any = requests) -> dict:
+    """{tab name: gid} of a link-shared sheet, in sheet order (see sheet_info)."""
+    return sheet_info(sheet_id, timeout, session)["gids"]
 
 
 def target_path(folder: str, filename: str) -> Path:
@@ -92,8 +120,12 @@ def target_path(folder: str, filename: str) -> Path:
 
 
 def download(sheet_id: str, tab: str, folder: str = ".", filename: str = DEFAULT_FILENAME,
-             timeout: float = DEFAULT_TIMEOUT, session: Any = requests) -> Path:
+             timeout: float = DEFAULT_TIMEOUT, session: Any = requests,
+             known_tabs: dict = None) -> Path:
     """Download the sheet, write it, mirror it. Returns the live Path.
+
+    known_tabs, if given, is a list_tabs() answer the caller fetched recently; the
+    tab is looked up in it instead of spending a request on the htmlview page.
 
     Raises DownloadError for every expected failure, tagged by kind so the
     caller can say what actually went wrong instead of "Error: <something>".
@@ -104,28 +136,30 @@ def download(sheet_id: str, tab: str, folder: str = ".", filename: str = DEFAULT
         raise DownloadError("input", "Enter both a Sheet ID and a tab name.")
 
     dest = target_path(folder, filename)
-    response = _get(session, sheet_url(sheet_id, tab), timeout)
+    # The export is by gid, so the name is looked up here; a typo or a renamed
+    # tab fails loudly instead of fetching some other tab.
+    tabs = list_tabs(sheet_id, timeout, session) if known_tabs is None else known_tabs
+    if tab not in tabs:
+        raise DownloadError("input", "No tab named '{}'. Tabs in this sheet: {}.".format(
+            tab, ", ".join(tabs) or "none found"))
+    response = _get(session, sheet_url(sheet_id, tabs[tab]), timeout)
 
     # A sheet that isn't link-shared redirects to a sign-in page and still
     # answers 200, so v1 happily wrote HTML into a .csv. Catch that.
     if "text/html" in response.headers.get("content-type", ""):
-        raise DownloadError("private", "That sheet isn't public. Set sharing to "
-                                       "'Anyone with the link can view'.")
-
-    # gviz answers an unknown tab name with the *first* tab, as a normal 200 CSV,
-    # so a typo or a renamed tab would overwrite the file with the wrong data.
-    tabs = list_tabs(sheet_id, timeout, session)
-    if tab not in tabs:
-        raise DownloadError("input", "No tab named '{}'. Tabs in this sheet: {}.".format(
-            tab, ", ".join(tabs) or "none found"))
+        raise DownloadError("private", PRIVATE_MESSAGE)
 
     # The live file, then a mirror under <folder>/data/. Same bytes, same name:
     # a plain second copy, overwritten every run, with no history kept.
     mirror = dest.parent / MIRROR_DIRNAME / dest.name
     for path in (dest, mirror):
+        tmp = path.with_name(path.name + ".tmp")
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(response.content)
+            tmp.write_bytes(response.content)
+            os.replace(tmp, path)   # a reader sees the old file or the new one, never half
         except OSError as exc:
+            with suppress(OSError):
+                tmp.unlink(missing_ok=True)
             raise DownloadError("write", f"Could not write {path}: {exc}") from exc
     return dest

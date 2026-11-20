@@ -4,32 +4,30 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## Repo state
 
-Post-refactor. The v2 package (`main/`) is built, wired, and tested; v1 is
-kept as the behavioral reference.
+Post-refactor. The v2 package (`main/`) is built, wired, and tested. The v1
+reconstruction (`legacy/CSVExtractor_reconstructed.py`) was removed; it is in
+git history if v1 behavior ever needs checking.
 
 - `main/` — the app. See Architecture below.
-- `legacy/CSVExtractor_reconstructed.py` — manual disassembly-to-source reconstruction
-  of the shipped PyInstaller binary (`CSVExtractor.exe`, Python 3.13) whose
-  source was lost. It is the **ground-truth spec for v1 behavior**, not code to
-  run or evolve. Don't "fix" it; it documents what v2 must keep doing.
 - Non-functional constraints still bind: single-purpose local utility, one user,
   one public sheet, no server/database/telemetry.
 
 ## Commands
 
 ```bash
-.venv/bin/python -m main              # run the app
-.venv/bin/python tests/test_downloader.py  # tests, standalone (no pytest needed)
+.venv/bin/python -m main                    # run the app
+.venv/bin/python tests/test_downloader.py   # tests, standalone (no pytest needed)
+.venv/bin/python tests/test_app.py
 ```
 
-The venv **must** be built from Python 3.12+ with Tk 8.6+ (Homebrew or
-python.org). macOS system Python is 3.9.6 with Tk 8.5.9 and renders the UI
-badly. Check with `python3 -c "import tkinter;print(tkinter.Tcl().eval('info patchlevel'))"`.
+The venv must be Python 3.12+ (Homebrew or python.org); `requirements.txt` pulls
+in pywebview, which brings pyobjc on macOS and pythonnet (WebView2) on Windows.
 
 ## Architecture
 
-Three modules with one rule: **network and filesystem logic stays out of
-`gui.py`**, so `downloader.py` is testable with no Tk event loop.
+pywebview window around one local HTML page. One rule: **network and filesystem
+logic stays out of `web/` and the UI glue**, so `downloader.py` is testable with
+no window at all.
 
 - `downloader.py` — pure. `download()` takes every input as an argument and
   raises `DownloadError` with a `kind` field (`input`, `timeout`, `network`,
@@ -39,99 +37,106 @@ Three modules with one rule: **network and filesystem logic stays out of
   and the mangled fetch that followed got misreported as `private`. Each success
   writes twice: the live file, and an overwritten mirror at
   `<folder>/data/<name>.csv` (deliberately no history — that was the choice).
+  Each write goes to `<name>.csv.tmp` then `os.replace`, so a program reading
+  the CSV never sees half a file (`config.save` does the same).
+  `sheet_info()` reads title + tabs + each tab's gid from **one** `htmlview` request; Google
+  localises the `<title>` suffix (" - Google Sheets", " - Google ไดรฟ์" …), so
+  only the last " - Google …" is cut. A private sheet redirects that request to
+  `accounts.google.com`, which is how it reports `private`. `download(known_tabs=)`
+  takes a `list_tabs()` answer (`{name: gid}`) and skips the tab-list request.
 - `config.py` — JSON settings + rotating log in `%APPDATA%\csvsync` /
   `~/.config/csvsync`. Deliberately not "next to the app": a PyInstaller
-  one-file build unpacks to a temp dir that is deleted on exit.
-- `gui.py` — design tokens, widgets, wiring. The worker thread posts to a
-  `queue.Queue` that `_drain()` polls on the Tk thread; **never touch a widget
-  from the worker**. `_run` posts `done` in a `finally`: without it, any
-  non-`DownloadError` (folder `~Desktop`) left Start disabled for good.
-  Tab name is a `ttk.Combobox`: editing the Sheet field schedules (600 ms
-  debounce) a background `list_tabs()` whose answer `_show_tabs()` drops if
-  the link changed meanwhile, and it only fills an **empty** tab field — never
-  swaps a saved name that went missing, which would sync an unpicked tab. Stop
-  is a `threading.Event` whose `wait(interval)` doubles as the loop sleep, so
-  stopping is immediate.
+  one-file build unpacks to a temp dir that is deleted on exit. `clean()` is the
+  trust boundary for both the file and the page: DEFAULTS' keys and types only,
+  `interval` ∈ `INTERVALS` = (3, 5, 10, 0 = Once), default 10. A 1.x file's
+  `"loop": false` becomes Once. The tab is never stripped (real names end in spaces).
+- `app.py` — `Api` (every public method is callable from JS as
+  `pywebview.api.<name>`; everything else is `_underscored` because pywebview
+  also exposes public *attributes*) and the sync worker. The worker reaches the
+  page **only** via `evaluate_js("onEvent(" + json.dumps(evt) + ")")` — always
+  json.dumps, since tab names and sheet titles come from Google. Events:
+  `downloading`, `saved {at, path}`, `failed {at, kind, message}`,
+  `wait {deadline_ms, interval}`, `done`. `done` is posted in a `finally`, after
+  `_worker` is cleared, so the page can never be left stuck and an instant
+  re-Start isn't refused. Stop is a `threading.Event` whose `wait(interval)`
+  doubles as the loop sleep, so stopping is immediate. Tabs are re-read on the
+  first pass and then at most every `TAB_RECHECK` (60 s) — at 3 s that halves the
+  requests to Google; the cost is that a tab renamed mid-run keeps syncing
+  (by gid) for up to 60 s before failing "No tab named …". Failure policy: **before the first save, every failure ends
+  the run** (the user just pressed Start); after it, `timeout`/`network`/`http`/`write`
+  log a row and retry, anything else ends it (`write`: on Windows a CSV open in
+  Excel refuses writes until it is closed). `_emit` swallows errors so a closed
+  window can't kill the worker. Also holds the pure helpers `short_path`,
+  `summary_text`, `tape_line`.
+- `__main__.py` — window (440×720, min 400×640) and menu. The page is loaded
+  as a `file://` URI: a bare path makes pywebview start a localhost HTTP server.
+  `WEB_DIR` lives in `app.py`, not here, because a PyInstaller entry script's
+  `__file__` is the bundle root while a package module's is `…/main/`.
+  Menu items just call `onMenu(name)`; the page decides if they apply.
+  pywebview's `MenuAction` has no shortcut field, so on macOS
+  `add_mac_shortcuts()` sets Cocoa key equivalents on the built items after page
+  load; on Windows `app.js` handles Ctrl+key (and `preventDefault`s WebView2's
+  Ctrl+R reload) and the menu shows no shortcut text.
+- `web/index.html`, `style.css`, `app.js` — one page. State lives on
+  `<body data-state="setup|downloading|running|error">` and CSS shows/hides
+  blocks by it. The error state keeps every setup card under the alert, so any
+  setting can be fixed before Try Again. Ported rules: the tab lookup is debounced
+  600 ms after the link changes and its answer is dropped if the link changed
+  meanwhile; the tab is auto-filled **only when empty** — a saved tab missing from
+  the sheet stays selected as "(not in this sheet)", never swapped for another,
+  which would sync an unpicked tab. The chosen tab is its own variable, not the
+  select's value, because a private sheet disables the select. `start()` sets up
+  `run` *before* awaiting `api.start`: the worker's first events can arrive
+  before the call returns. Settings save on every `input` (Python locks the
+  write), because nothing on close can ask the page for its fields: a closing
+  handler that called `evaluate_js` would deadlock the main thread.
+  Strings from Google go in via `textContent` / `new Option()`, never innerHTML.
 
 ### Visual style
 
-Restrained, quiet, generous whitespace — a fixed paper palette rather than
-native chrome. All of it lives in the token block at the top of `gui.py`
-(`BG`/`INK`/`MUTED`/`EDGE`/`LINE`/`ACCENT`, `PAD`, `GAP`) plus `apply_theme()`.
-Contrast floors are measured, not eyeballed: `MUTED` text 5.38:1 (needs 4.5),
-`EDGE` control borders 3.43:1 (fields are white on white, so the border is
-their only edge); `LINE` is decorative only (countdown track, disabled
-buttons, which should recede). The theme is
-`clam` on purpose: `aqua` and `vista` draw natively and ignore colour options.
-Consequence: the app does not follow OS dark mode. Adding it means a second
-token set, not new widgets.
+Quiet, generous whitespace, a fixed paper palette. Every colour is a CSS
+variable in `:root` of `style.css` (`--bg --card --card-edge --ink --muted
+--field-edge --line --well --accent --accent-tint --ok --err --err-bg --err-edge
+--err-text`, plus `--on-accent` and `--ring`), so dark mode is one
+`prefers-color-scheme` block. Contrast floors are measured: `--muted` 5.1:1,
+`--field-edge` 3.4:1 (white fields on white cards — the border is their only
+edge); `--line` is decorative only. Layout: 28 px padding, 18 px between blocks,
+cards white / 1 px `--card-edge` / radius 10 / padding 16 / 12 px apart. Setup
+fits the default 720 px window with a short folder path; vertical spacing was
+tightened to get there, so check `scrollHeight` before adding rows.
 
-Two type roles, and the split is a rule rather than a preference: **prose is
-sans, anything the user types is mono.** A Sheet ID, tab name, filename and
-path are literals that have to match something exactly. Both roles use the
-OS's current system fonts: SF Pro / SF Mono on macOS (reachable only as the
-dot-names `.AppleSystemUIFont` / `.AppleSystemUIFontMonospaced`, which
-`font.families()` doesn't list — so `_pick()` keeps the first name Tk actually
-*resolves*), Segoe UI Variable / Cascadia Mono on Windows 11, then Avenir Next /
-Segoe UI and Menlo / Consolas as fallbacks. No font is bundled, because Tk has
-no font-loading API and registering one is per-platform `ctypes`. Font sizes are **negative = pixels**: points go through
-`tk scaling`, which is 1.0 px/pt on older macOS Tk and 1.33 on Tk 9, so a
-point size rendered 25% smaller depending on the build. Section markers
-(`SOURCE`, `OUTPUT`) are plain `text.upper()` in
-`Sect.TLabel`, mono at a small size and muted color — no letterspacing (Tk has
-no tracking option, and a hand-rolled space-join read heavier than intended).
+Two type roles, a rule rather than a preference: **prose is sans; anything the
+user types or the app reads back (link, tab, file name, path, status word, log)
+is mono.** Both stacks are system fonts only, nothing bundled.
 
-The top slot is the **status readout**, not a wordmark (the title bar already
-names the app): mono bold 32 px, `idle` / `syncing…` / `saved HH:MM:SS` /
-`failed HH:MM:SS`, so state never rests on colour alone. Beside it a square
-tally mark; failed draws it **hollow**, because a solid red light reads as "on
-air" in a control room. The readout and the tape row share one timestamp.
+Header: a 14 px circle + lowercase mono status word (26 px), so state never rests
+on colour alone. `ready` hollow; `downloading…` filled accent, pulsing;
+`syncing` filled; `saved` (Once finished) filled `--ok`; `failed` hollow
+`--err` — a solid red light reads as "on air". "Last saved HH:MM:SS" shows only
+while downloading/running.
 
-The window has two states. Idle shows the setup pane; Start calls `collapse()`,
-which `grid_remove()`s it behind a one-line summary of what the run is actually
-using. The fields stay enabled — Start is disabled while running, so the only
-way to apply an edit is Stop then Start, which re-reads them anyway.
-`_refit()` rewrites the **height only**; `geometry("")` would also reset a
-width the user dragged.
+Every focusable thing has a `:focus-visible` ring (3 px `--ring`, 1 px offset).
+Where an inner input drops its outline (the `.csv` affix field, the folder
+well) the wrapper carries the ring via `:focus-within`. `prefers-reduced-motion`
+stops the pulse and the sliding bar. Return triggers the default button (skipped
+during IME composition and on buttons/selects).
 
-Text fields and the tab dropdown share one look: a square `EDGE` line, `MUTED`
-under the pointer, a 2 px `ACCENT` ring on focus. Both use a custom layout of
-**alt-theme** parts (`Box.border` + `Ring.focus`), not clam's field: clam's
-border skips its corner pixels (a fake rounding that reads as gaps at the
-corners), and a 2 px border leaves a hole at the inner corners, so focus is two
-1 px rectangles instead. The idle focus ring still holds its pixel, so text
-never shifts. The dropdown's arrow is clam's `Menubutton.indicator`, a bare
-triangle; clam's own combobox arrow is boxed in a bevelled button.
-On macOS Tk 9 the open list is a **native menu**, so the listbox option-db
-styling only reaches Windows and older Tk.
-
-`Check.Toolbutton` is the Repeat toggle: a real `ttk.Checkbutton` (Space
-toggles it) styled on clam's `Toolbutton` layout, which has no indicator
-element — clam's own `TCheckbutton` indicator draws an **✗** for "checked",
-which reads as "no" on a control that means "yes", and the classic
-`tk.Checkbutton` draws no mark at all on macOS. `_sync_repeat_mark()` draws
-`☑`/`☐` itself as the widget's text, wired to the `command` callback so it
-stays in sync with clicks.
-
-The signature is `_rule`: the hairline between the tape and the footer is also
-the countdown, filling in `ACCENT` as the interval elapses. It rides `_drain`'s
-existing 100 ms timer via `_tick()` — there is no second `after` loop, and the
-deadline arrives from the worker as a `("wait", (deadline, interval))` message
-so it tracks the settings the run actually started with.
-
-`self.tape` is a read-only `tk.Text`, not a label: it is the only place results
-appear, and one footer label used to clip every path and every long error.
-Capped at `TAPE_LINES`.
+To see every state without clicking: drive a real window with `evaluate_js` and
+`WKWebView.takeSnapshotWithConfiguration_completionHandler_`. `screencapture`
+from the app's own process comes back blank (no screen-recording permission,
+and WebKit stops painting occluded windows).
 
 ## Constraints worth not relearning
 
-- The fetch is unauthenticated (`gviz/tq?tqx=out:csv`), so it only works on
+- The fetch is unauthenticated (`export?format=csv&gid=…`), so it only works on
   sheets shared "Anyone with the link can view". OAuth is out of scope.
+- **Not gviz** (`gviz/tq?tqx=out:csv`, what v1 used): it types each column by
+  majority and blanks every cell of another type, and quotes every field and
+  drops blank rows. The export writes the cells as shown, quoting only when needed.
 - A non-public sheet answers **200 with an HTML sign-in page**; `downloader.py`
   checks the content type so it never writes HTML into a `.csv`.
-- gviz answers an **unknown tab name with the first tab** (200, valid CSV, no
-  error). `download()` checks the name against the tab list on the public
-  `htmlview` page. That page is undocumented: if Google changes it, every run
+- The export is by gid, so `download()` looks the tab name up in the tab list
+  on the public `htmlview` page (`items.push({name: …, pageUrl: …, gid: …})`). That page is undocumented: if Google changes it, every run
   fails with "No tab named …" — loud, never silently wrong.
 - PyInstaller cannot cross-compile. Windows `.exe` builds on Windows, macOS
   `.app` on macOS, same source. `.github/workflows/build.yml` does both on a `v*`
@@ -139,6 +144,9 @@ Capped at `TAPE_LINES`.
 - The two platforms need **different PyInstaller flags**. macOS is onedir
   (`--windowed`): `--onefile` with a `.app` is deprecated, "clashes with macOS's
   security", and becomes an error in PyInstaller 7 — and it zips to the same 13 MB
-  anyway. Windows is `--onefile --windowed`, since it has no bundle format.
+  anyway. Windows is `--onefile --windowed`, since it has no bundle format. Both
+  need `--add-data "main/web:main/web"`; PyInstaller 6 accepts `:` on Windows too.
+  In the `.app` the data lands in `Contents/Resources/main/web`, reached through
+  the `Contents/Frameworks/main` symlink.
 - Builds are unsigned on purpose, so both OSes block the first launch. Not a broken
   build — see the README. Signing is ~$99/yr Apple plus a Windows cert.
