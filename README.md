@@ -17,7 +17,7 @@ download the app from the
 
 Both downloads are unsigned, so each operating system blocks them **once**. You only need to do this on first launch.
 
-- **Mac:** you need to enable the app by going to **Settings** → **Privacy & Security**
+- **Mac:** *"csvSync Not Opened"* → **Done**. Then open **System Settings** → **Privacy & Security**, scroll to the bottom, click **Open Anyway** next to *"csvSync was blocked"*, and confirm with your password.
 - **Windows:** *"Windows protected your PC"* → **More info** → **Run anyway**.
 
 ## Using it
