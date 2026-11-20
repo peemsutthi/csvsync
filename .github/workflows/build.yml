@@ -32,13 +32,13 @@ jobs:
       # macOS: build a .app bundle and zip it.
       - if: runner.os == 'macOS'
         run: |
-          pyinstaller --windowed --name csvSync --paths . --add-data "main/web:main/web" --noconfirm main/__main__.py
+          pyinstaller --windowed --icon assets/csvsync.icns --name csvSync --paths . --add-data "main/web:main/web" --noconfirm main/__main__.py
           ditto -c -k --keepParent dist/csvSync.app "${{ matrix.artifact }}"
 
       # Windows: build a single executable.
       - if: runner.os == 'Windows'
         run: |
-          pyinstaller --onefile --windowed --name csvSync --paths . --add-data "main/web:main/web" --noconfirm main/__main__.py
+          pyinstaller --onefile --windowed --icon assets/csvsync.ico --name csvSync --paths . --add-data "main/web:main/web" --noconfirm main/__main__.py
           Move-Item dist/csvSync.exe "${{ matrix.artifact }}"
 
       - uses: actions/upload-artifact@v4
