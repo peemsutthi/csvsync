@@ -18,6 +18,7 @@ git history if v1 behavior ever needs checking.
 .venv/bin/python -m main                    # run the app
 .venv/bin/python tests/test_downloader.py   # tests, standalone (no pytest needed)
 .venv/bin/python tests/test_app.py
+.venv/bin/python tests/test_config.py
 ```
 
 The venv must be Python 3.12+ (Homebrew or python.org); `requirements.txt` pulls
