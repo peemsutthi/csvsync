@@ -25,6 +25,8 @@ let state = "setup";
 let folder = "";               // the full path; the well shows Python's short form
 let folderDisplay = "";
 let interval = 10;
+let custom = false;            // the Custom segment is picked; interval comes from its field
+const MAX_INTERVAL = 86400;    // = config.MAX_INTERVAL
 let tab = "";                  // the chosen tab; kept even while the select can't show it
 let tabs = null;               // the link's tab list, once known
 let tabsHint = "";             // what an empty select says
@@ -77,7 +79,8 @@ function invalid(id, on) {
 }
 
 function clearFieldErrors() {
-  for (const id of ["link", "tab", "folder"]) invalid(id, false);
+  for (const id of ["link", "tab", "folder", "custom-seconds"]) invalid(id, false);
+  note("custom-note", "", "");
   if ($("link-note").classList.contains("err")) note("link-note", "", "");
   $("tab").disabled = false;           // a private sheet's "Tabs show once…" placeholder
   renderTabs();
@@ -201,15 +204,45 @@ async function chooseFolder() {
 
 function renderInterval() {
   for (const button of document.querySelectorAll(".segments button")) {
-    button.setAttribute("aria-pressed", String(Number(button.dataset.interval) === interval));
+    const on = button.dataset.interval === "custom" ? custom : !custom && Number(button.dataset.interval) === interval;
+    button.setAttribute("aria-pressed", String(on));
   }
+  $("custom-row").hidden = !custom;
   if (state === "setup") $("primary").textContent = interval === 0 ? "Fetch Now" : "Start Sync";
+}
+
+// The Custom field's seconds, or null while it doesn't hold 1…MAX_INTERVAL.
+function customSeconds() {
+  const n = Number($("custom-seconds").value);
+  return /^\d+$/.test($("custom-seconds").value) && n >= 1 && n <= MAX_INTERVAL ? n : null;
+}
+
+// Digits only: anything else is dropped as it is typed or pasted, and the note says why.
+function applyCustom() {
+  const field = $("custom-seconds");
+  const digits = field.value.replace(/\D/g, "");
+  const stripped = digits !== field.value;
+  field.value = digits;
+  const seconds = customSeconds();
+  invalid("custom-seconds", digits !== "" && seconds === null);
+  note("custom-note", stripped || (digits && seconds === null) ? "err" : "",
+       stripped ? "Numbers only." : digits && seconds === null ? "Enter 1–" + MAX_INTERVAL + " seconds." : "");
+  if (seconds === null) return;
+  interval = seconds;
+  renderInterval();
+  save();
 }
 
 // --- start / stop ----------------------------------------------------------------
 async function start() {
   if ((state !== "setup" && state !== "error") || $("primary").disabled) return;
   clearFieldErrors();
+  if (custom && customSeconds() === null) {
+    invalid("custom-seconds", true);
+    note("custom-note", "err", "Enter 1–" + MAX_INTERVAL + " seconds.");
+    $("custom-seconds").focus();
+    return;
+  }
   const settings = form();
   // Set up before asking: the worker's first events can arrive before start() returns.
   run = { tab: settings.tab, interval: settings.interval, started: false, stopping: false, failure: null };
@@ -396,6 +429,8 @@ async function init() {
   folder = settings.folder;
   folderDisplay = settings.folder_display;
   interval = settings.interval;
+  custom = ![...document.querySelectorAll(".segments button")].some((b) => Number(b.dataset.interval) === interval);
+  if (custom) $("custom-seconds").value = interval;
   tab = settings.tab;
   tabsHint = settings.sheet_id.trim() ? "Looking up tabs…" : "";
   renderTabs();
@@ -421,11 +456,23 @@ async function init() {
   $("open-sheet").addEventListener("click", () => api.open_sheet($("link").value));
   for (const button of document.querySelectorAll(".segments button")) {
     button.addEventListener("click", () => {
+      if (button.dataset.interval === "custom") {
+        custom = true;
+        if (!$("custom-seconds").value && interval) $("custom-seconds").value = interval;
+        renderInterval();
+        applyCustom();                 // a value typed earlier becomes the interval again
+        $("custom-seconds").focus();
+        return;
+      }
+      custom = false;
+      invalid("custom-seconds", false);
+      note("custom-note", "", "");
       interval = Number(button.dataset.interval);
       renderInterval();
       save();
     });
   }
+  $("custom-seconds").addEventListener("input", applyCustom);
   if (settings.sheet_id.trim()) lookup();
   $("link").focus();
 }

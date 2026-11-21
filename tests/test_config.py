@@ -22,12 +22,15 @@ def test_clean_keeps_only_known_keys_and_types():
 def test_intervals_outside_the_choices_fall_back():
     for interval in config.INTERVALS:
         assert config.clean({"interval": interval})["interval"] == interval
-    assert config.clean({"interval": 1})["interval"] == 10
+    for kept in (1, 123, config.MAX_INTERVAL):      # Custom
+        assert config.clean({"interval": kept})["interval"] == kept
+    for bad in (-1, config.MAX_INTERVAL + 1):
+        assert config.clean({"interval": bad})["interval"] == 10
 
 
 def test_a_1x_file_migrates():
     assert config.clean({"interval": 30, "loop": False})["interval"] == 0     # "Repeat" off: Once
-    assert config.clean({"interval": 30, "loop": True})["interval"] == 10
+    assert config.clean({"interval": 30, "loop": True})["interval"] == 30      # kept, as Custom
 
 
 def test_save_then_load_round_trips():

@@ -49,7 +49,8 @@ no window at all.
   `~/.config/csvsync`. Deliberately not "next to the app": a PyInstaller
   one-file build unpacks to a temp dir that is deleted on exit. `clean()` is the
   trust boundary for both the file and the page: DEFAULTS' keys and types only,
-  `interval` ∈ `INTERVALS` = (3, 5, 10, 0 = Once), default 10. A 1.x file's
+  `interval` is 0 (Once) or 1…`MAX_INTERVAL` (86400) seconds, default 10;
+  `INTERVALS` = (3, 5, 10, 0) are the presets, and anything else shows as Custom. A 1.x file's
   `"loop": false` becomes Once. The tab is never stripped (real names end in spaces).
 - `app.py` — `Api` (every public method is callable from JS as
   `pywebview.api.<name>`; everything else is `_underscored` because pywebview

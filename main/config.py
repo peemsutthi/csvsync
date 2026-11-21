@@ -13,7 +13,8 @@ DEFAULTS = {
     "folder": "",
     "interval": 10,     # seconds between syncs; 0 = fetch once
 }
-INTERVALS = (3, 5, 10, 0)   # the Schedule control's choices, in display order
+INTERVALS = (3, 5, 10, 0)   # the Schedule control's presets, in display order
+MAX_INTERVAL = 86400        # Custom accepts 1…this many seconds (keep app.js in step)
 
 
 def config_dir() -> Path:
@@ -37,7 +38,7 @@ def clean(raw) -> dict:
         settings[key] = settings[key].strip()
     if raw.get("loop") is False:    # a 1.x file: Repeat unticked is now "Once"
         settings["interval"] = 0
-    if settings["interval"] not in INTERVALS:
+    if not (settings["interval"] == 0 or 1 <= settings["interval"] <= MAX_INTERVAL):
         settings["interval"] = DEFAULTS["interval"]
     return settings
 

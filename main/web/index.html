@@ -67,6 +67,13 @@
         <button type="button" data-interval="5">5 s</button>
         <button type="button" data-interval="10">10 s</button>
         <button type="button" data-interval="0">Once</button>
+        <button type="button" data-interval="custom">Custom</button>
+      </div>
+      <div id="custom-row" hidden>
+        <label for="custom-seconds">Syncs interval</label>
+        <input id="custom-seconds" type="text" class="field" inputmode="numeric" autocomplete="off"
+               placeholder="1–86400" aria-describedby="custom-note">
+        <p class="note" id="custom-note" hidden></p>
       </div>
     </section>
 
@@ -89,7 +96,7 @@
       <ol class="log" id="log" tabindex="0" aria-labelledby="h-activity"></ol>
       <div class="row end">
         <button type="button" class="btn" id="open-file" disabled>Open File</button>
-        <button type="button" class="btn" id="reveal" disabled>Show in Finder</button>
+        <button type="button" class="btn" id="reveal" disabled>Show in Folder</button>
       </div>
     </section>
   </div>

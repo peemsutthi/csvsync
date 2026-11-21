@@ -137,7 +137,7 @@ code { font: 12px var(--mono); color: var(--ink); }
 
 /* --- schedule ------------------------------------------------------------------- */
 .segments {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   border: 1px solid var(--field-edge); border-radius: 6px;
 }
 .segments button {
@@ -151,8 +151,12 @@ code { font: 12px var(--mono); color: var(--ink); }
 .segments button[aria-pressed="true"] {
   background: var(--accent); color: var(--on-accent); font-weight: 600;
   border-left-color: var(--accent);
+  margin: -1px; height: 34px; position: relative; z-index: 1;
 }
+.segments button[aria-pressed="true"]:first-child { border-radius: 6px 0 0 6px; }
+.segments button[aria-pressed="true"]:last-child { border-radius: 0 6px 6px 0; }
 .segments button:focus-visible { position: relative; z-index: 1; }
+#custom-row { margin-top: 12px; }
 
 /* --- buttons ------------------------------------------------------------------ */
 .btn {
